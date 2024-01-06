@@ -1,0 +1,201 @@
+---
+title: "PCP study"
+author: "Akihiro Shiroshita, MD, MPH"
+date: "`r Sys.time()`"
+output: 
+    word_document:
+      toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+packages = c("here",
+             "readr",
+             "readxl",
+             "tableone",
+             "tidyverse",
+             "tidylog",
+             "lubridate",
+             "ggplot2",
+             "RColorBrewer",
+             "ggplotgui",
+             "ggthemes",
+             "broom",
+             "survival",
+             "JM",
+             "survminer",
+             "ggfortify",
+             "magrittr",
+             "rms",
+             "lme4",
+             "ggeffects"
+             )
+
+#install.packages("spDataLarge", repos = "https://nowosad.r-universe.dev")
+package.check <- lapply(packages, FUN = function(x){
+  if (!require(x, character.only = TRUE)){
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+
+knitr::opts_chunk$set(
+	echo = FALSE,
+	fig.pos = "t",
+	message = FALSE,
+	warning = FALSE,
+	out.extra = ""
+)
+#rm(list=ls())
+cols <- brewer.pal(6, "Set1")
+
+theme_set(theme_bw())
+mytheme <- function(...){
+  theme(panel.grid.minor=element_blank(),
+        plot.margin=unit(c(0.5, 0.5, 0.5, 0.5), 'lines'),
+        axis.title.x=element_text(size=12, vjust=0),
+        axis.title.y=element_text(size=12, vjust=1, angle=90),
+        legend.title=element_text(size=12, face='bold'),
+        legend.text=element_text(size=12),
+        legend.position='top', legend.direction='horizontal', 
+        legend.key=element_blank(),
+        legend.key.width=unit(1.5,"cm"),
+        legend.key.height=unit(0.35,'cm'),
+        strip.text.y=element_text(size=12))}
+
+plotResid <- function(x, y, col.lowess='red', ...){
+  plot(x, y, ...)
+  abline(h=0, col='gray', lwd=2)
+  lines(lowess(x, y), col=col.lowess, lwd=2)}
+plotQQ <- function(x, ...){
+  qqnorm(x, main='')
+  qqline(x, col='gray', lwd=2)}
+
+setwd("C:/Users/shiroa1/OneDrive - Vanderbilt/PCP-prognosis")
+
+data <- read_excel("input/pcp_study_cleaned.xlsx")
+beta_d_after <- read_rds('input/beta_d_after.rds')
+ldh_after <- read_rds('input/ldh_after.rds')
+```
+
+The study aim was evaluating whether subject specific KL-6 evolution is associated with hazard of acute exacerbation of PF-ILD.   
+
+# Exploratory analyses  
+
+## Descriptive  
+
+Number of patients  
+
+```{r}
+ids %>% length()
+```
+
+Distribution of beta-d
+
+```{r}
+ggplot(data, aes(x = beta_d)) +
+  geom_density(position = 'identity', alpha = 0.8, adjust = 1) +
+  facet_grid(~death90) +
+  theme_bw()
+```
+
+```{r}
+glm(death30 ~ beta_d_100, family = binomial, data = data) %>% 
+  tidy(., exponentiate = TRUE, conf.int = TRUE)
+```
+
+```{r}
+glm(death90 ~ beta_d_100, family = binomial, data = data) %>% 
+  tidy(., exponentiate = TRUE, conf.int = TRUE)
+```
+
+Change of KL-6  
+
+```{r}
+summary(beta_d_after$diff)
+```
+
+## Table 1
+
+```{r}
+vars <- c("age", "sex", "bmi_cat", "adl_cat", "hugh_johns_cat", "adm_jcs", "bun_cat",
+          "spo2", "sbp", "escalation", "new_insuline","death30", "death90")
+factorVars <- c("sex", "bmi_cat", "adl_cat", "hugh_johns_cat", "adm_jcs", "bun_cat",
+          "spo2", "sbp", "escalation", "new_insuline", "death30", "death90")
+table1 <- CreateTableOne(vars = vars,
+                         data = data,
+                         includeNA = TRUE,
+                         factorVars = factorVars,
+                         strata = "escalation"
+                         )
+table1 %>% 
+  print() %>% write.csv("../memo/table1.csv")
+```
+
+```{r}
+glm(death90 ~ escalation, family = binomial, data = data) %>% 
+  tidy(., exponentiate = TRUE, conf.int = TRUE)
+```
+
+```{r}
+glm(death90 ~ escalation + age + spo2, family = binomial, data = data) %>% 
+  tidy(., exponentiate = TRUE, conf.int = TRUE)
+```
+
+```{r}
+glm(death90 ~ change_steroid, family = binomial, data = data) %>% 
+  tidy(., exponentiate = TRUE, conf.int = TRUE)
+```
+
+```{r}
+glm(death90 ~ change_steroid + age + spo2, family = binomial, data = data) %>% 
+  tidy(., exponentiate = TRUE, conf.int = TRUE)
+```
+
+```{r}
+surv <- as_tibble(data) %>%
+  arrange(observation_period) %>%
+  {Surv(time=.[["observation_period"]], event=.[["死亡の有無"]])}
+
+covariates <- c("age",
+                "spo2")
+formula <- as.formula(paste("surv", "~", "escalation", "+", paste(covariates, collapse = "+")))
+
+coxfit1 <- coxph(formula, data=data, ties="breslow")
+coxfit2 <- coxph(formula, data=data, ties="efron")
+coxfit3 <- coxph(formula, data=data, ties="exact")
+
+coxfits <- list(coxfit1,coxfit2,coxfit3)
+
+purrr::map(coxfits, function(x) tidy(x,exponentiate=TRUE, conf.int=TRUE) %>% slice(1)) %>%
+  bind_rows %>%
+  mutate(term = c("Breslow", "Efron", "Exact")) 
+```
+
+
+## Selecting patients  
+
+```{r}
+ggplot(beta_d_after, aes(interval, result, group=`患者ID`)) +
+  geom_line(aes(color=factor(death90==0)), alpha=0.2) +
+  scale_x_continuous(name='Days', limits=c(0,3000)) +
+  scale_y_continuous(name='Beta-D', limits=c(0,500)) + 
+  scale_color_manual(name='Outcome', values=cols[c(1,2)],
+                     labels = c('Dearh', 'Alive')) +
+  mytheme()
+```
+
+```{r}
+beta_d_after <- within(beta_d_after, {
+  status.lab <- ifelse(death90==1, 'Death', 'Alive')})
+
+ggplot(beta_d_after, aes(interval-observation_time, result, group=`患者ID`)) +
+  facet_wrap( ~ status.lab) +
+  geom_line(aes(color = status.lab), alpha=0.2) +
+  scale_x_continuous(name='Time from end of follow-up (days)', limits=c(-100,0)) +
+  scale_y_continuous(name='Beta-D', limits=c(0,1000)) + 
+  scale_color_manual(name='Event', values=cols[c(1,2,1,2)]) +
+  mytheme()
+```
+
