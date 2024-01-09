@@ -231,8 +231,6 @@ beta_d <- pcp_laboratory %>%
   left_join(., anti_pcp_medication, by = c('患者ID')) %>% 
   filter(ymd(`入院日`)-1 <= ymd(`検査日`))
 
-beta_d %>% write_rds('beta_d_after.rds')
-
 beta_d_baseline <- beta_d %>% 
   filter(ymd(`入院日`)-1 <= ymd(`検査日`) & ymd(`検査日`) <= ymd(`入院日`)+1) %>% 
   arrange(`検査日`) %>% 
@@ -250,8 +248,6 @@ ldh <- pcp_laboratory %>%
   filter(`患者ID` %in% ids) %>% 
   left_join(., anti_pcp_medication, by = c('患者ID')) %>% 
   filter(ymd(`入院日`)-1 <= ymd(`検査日`))
-
-ldh %>% write_rds('ldh_after.rds')
 
 ldh_baseline <- ldh %>% 
   filter(ymd(`入院日`)-1 <= ymd(`検査日`) & ymd(`検査日`) <= ymd(`入院日`)+1) %>% 
@@ -271,7 +267,7 @@ ldh2 <- pcp_laboratory %>%
   left_join(., anti_pcp_medication, by = c('患者ID')) %>% 
   filter(ymd(`入院日`)-1 <= ymd(`検査日`))
 
-ldh2 %>% write_rds('ldh_after2.rds')
+#ldh2 %>% write_rds('ldh_after2.rds')
 
 ldh_baseline2 <- ldh2 %>% 
   filter(ymd(`入院日`)-1 <= ymd(`検査日`) & ymd(`検査日`) <= ymd(`入院日`)+1) %>% 
@@ -561,7 +557,7 @@ anti_pcp_medication <- anti_pcp_medication %>%
          ldh_baseline_100 = beta_d_baseline/100,
          ldh_baseline2 = as.numeric(ldh_baseline2),
          ldh_baseline2_100 = ldh_baseline2/100) %>% 
-  mutate(across(intubation_prior90:steroid_after2, ~replace_na(.x, 0))) %>% 
+  mutate(across(intubation_after07:steroid_after2, ~replace_na(.x, 0))) %>% 
   rename(id = `患者ID`) %>% 
   mutate(death30 = if_else(death30 == 2 | is.na(death30), 0, death30), # censoring = 12
          death90 = if_else(death90 == 2 | is.na(death90), 0, death90)) # censoring = 18
@@ -592,6 +588,13 @@ ids <- anti_pcp_medication %>%
 
 anti_pcp_medication %>% write_xlsx('cleaned/pcp_study_cleaned.xlsx')
 
+beta_d <- pcp_laboratory %>% 
+  filter(`検査名` == '(1→3)-b -Dグルカン;β-D-glu') %>% 
+  filter(`患者ID` %in% ids) %>% 
+  rename(id = `患者ID`) %>% 
+  left_join(., anti_pcp_medication, by = c('id')) %>% 
+  filter(ymd(`入院日`)-1 <= ymd(`検査日`))
+
 beta_d <- beta_d %>% 
   mutate(`結果` = stringr::str_replace(`結果`, '<', ''),
          `結果` = stringr::str_replace(`結果`, '>', ''),
@@ -600,8 +603,8 @@ beta_d <- beta_d %>%
          `結果` = as.numeric(`結果`)
   ) %>% 
   rename(result = `結果`) %>% 
-  arrange(`患者ID`, `検査日`) %>% 
-  group_by(`患者ID`) %>% 
+  arrange(id, `検査日`) %>% 
+  group_by(id) %>% 
   mutate(result_lag = lag(result),
          interval = as.numeric(ymd(`検査日`) - ymd(`入院日`) + 1),
          observation_time = as.numeric(ymd(`観察期間終了日.EMR.`) - ymd(`入院日`) + 1)) %>% 
@@ -609,3 +612,28 @@ beta_d <- beta_d %>%
   mutate(diff = result - result_lag)
 
 beta_d %>% write_rds('cleaned/beta_d_after.rds')
+
+ldh <- pcp_laboratory %>% 
+  filter(`検査名` == '乳酸脱水素酵素;LDH') %>% 
+  filter(`患者ID` %in% ids) %>% 
+  rename(id = `患者ID`) %>% 
+  left_join(., anti_pcp_medication, by = c('id')) %>% 
+  filter(ymd(`入院日`)-1 <= ymd(`検査日`))
+
+ldh <- ldh %>% 
+  mutate(`結果` = stringr::str_replace(`結果`, '<', ''),
+         `結果` = stringr::str_replace(`結果`, '>', ''),
+         `結果` = stringr::str_replace(`結果`, '=', ''),
+         `結果` = stringr::str_replace(`結果`, '-', ''),
+         `結果` = as.numeric(`結果`)
+  ) %>% 
+  rename(result = `結果`) %>% 
+  arrange(id, `検査日`) %>% 
+  group_by(id) %>% 
+  mutate(result_lag = lag(result),
+         interval = as.numeric(ymd(`検査日`) - ymd(`入院日`) + 1),
+         observation_time = as.numeric(ymd(`観察期間終了日.EMR.`) - ymd(`入院日`) + 1)) %>% 
+  ungroup() %>% 
+  mutate(diff = result - result_lag)
+
+ldh %>% write_rds('cleaned/ldh_after.rds')

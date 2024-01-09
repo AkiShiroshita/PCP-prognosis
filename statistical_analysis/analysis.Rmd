@@ -75,127 +75,270 @@ plotQQ <- function(x, ...){
 setwd("C:/Users/shiroa1/OneDrive - Vanderbilt/PCP-prognosis")
 
 data <- read_excel("input/pcp_study_cleaned.xlsx")
-beta_d_after <- read_rds('input/beta_d_after.rds')
-ldh_after <- read_rds('input/ldh_after.rds')
+ids <- data %>% 
+  distinct(id) %>% 
+  pull()
+
+beta_d <- read_rds('input/beta_d_after.rds')
+
+beta_d <- beta_d %>% 
+  mutate(log_result = log(result),
+         result_100 = result/100,
+         log_result_100 = log(result_100),
+         interval = if_else(interval <= 0, 0.5, interval)) %>% 
+  drop_na(age, sex, spo2) %>% 
+  filter(interval <= 90)
+  
+include_ids_beta_d <- beta_d %>% 
+  group_by(id) %>% 
+  summarise(nrow = n()) %>% 
+  ungroup() %>% 
+  filter(nrow > 2) %>% 
+  dplyr::select(id) %>% 
+  pull()
+
+beta_d <- beta_d %>% 
+  filter(id %in% include_ids_beta_d)
+
+ldh <- read_rds('input/ldh_after.rds')
+
+ldh <- ldh %>% 
+  mutate(log_result = log(result),
+         result_100 = result/100,
+         log_result_100 = log(result_100),
+         interval = if_else(interval <= 0, 0.5, interval)) %>% 
+  drop_na(age, sex, spo2) %>% 
+  filter(interval <= 90)
+
+include_ids_ldh <- ldh %>% 
+  group_by(id) %>% 
+  summarise(nrow = n()) %>% 
+  ungroup() %>% 
+  filter(nrow > 2) %>% 
+  dplyr::select(id) %>% 
+  pull() 
+
+ldh <- ldh %>% 
+  filter(id %in% include_ids_ldh)
 ```
 
-The study aim was evaluating whether subject specific KL-6 evolution is associated with hazard of acute exacerbation of PF-ILD.   
-
-# Exploratory analyses  
-
-## Descriptive  
-
-Number of patients  
+Distribution of Beta-D
 
 ```{r}
-ids %>% length()
-```
-
-Distribution of beta-d
-
-```{r}
-ggplot(data, aes(x = beta_d)) +
+ggplot(beta_d, aes(x = result)) +
   geom_density(position = 'identity', alpha = 0.8, adjust = 1) +
   facet_grid(~death90) +
   theme_bw()
 ```
 
-```{r}
-glm(death30 ~ beta_d_100, family = binomial, data = data) %>% 
-  tidy(., exponentiate = TRUE, conf.int = TRUE)
-```
+Distribution of LDH
 
 ```{r}
-glm(death90 ~ beta_d_100, family = binomial, data = data) %>% 
-  tidy(., exponentiate = TRUE, conf.int = TRUE)
+ggplot(ldh, aes(x = result)) +
+  geom_density(position = 'identity', alpha = 0.8, adjust = 1) +
+  facet_grid(~death90) +
+  theme_bw()
 ```
 
-Change of KL-6  
+Change of Beta-D  
 
 ```{r}
-summary(beta_d_after$diff)
+summary(beta_d$diff)
 ```
 
-## Table 1
+Change of LDH  
 
 ```{r}
-vars <- c("age", "sex", "bmi_cat", "adl_cat", "hugh_johns_cat", "adm_jcs", "bun_cat",
-          "spo2", "sbp", "escalation", "new_insuline","death30", "death90")
-factorVars <- c("sex", "bmi_cat", "adl_cat", "hugh_johns_cat", "adm_jcs", "bun_cat",
-          "spo2", "sbp", "escalation", "new_insuline", "death30", "death90")
-table1 <- CreateTableOne(vars = vars,
-                         data = data,
-                         includeNA = TRUE,
-                         factorVars = factorVars,
-                         strata = "escalation"
-                         )
-table1 %>% 
-  print() %>% write.csv("../memo/table1.csv")
+summary(ldh$diff)
 ```
-
-```{r}
-glm(death90 ~ escalation, family = binomial, data = data) %>% 
-  tidy(., exponentiate = TRUE, conf.int = TRUE)
-```
-
-```{r}
-glm(death90 ~ escalation + age + spo2, family = binomial, data = data) %>% 
-  tidy(., exponentiate = TRUE, conf.int = TRUE)
-```
-
-```{r}
-glm(death90 ~ change_steroid, family = binomial, data = data) %>% 
-  tidy(., exponentiate = TRUE, conf.int = TRUE)
-```
-
-```{r}
-glm(death90 ~ change_steroid + age + spo2, family = binomial, data = data) %>% 
-  tidy(., exponentiate = TRUE, conf.int = TRUE)
-```
-
-```{r}
-surv <- as_tibble(data) %>%
-  arrange(observation_period) %>%
-  {Surv(time=.[["observation_period"]], event=.[["死亡の有無"]])}
-
-covariates <- c("age",
-                "spo2")
-formula <- as.formula(paste("surv", "~", "escalation", "+", paste(covariates, collapse = "+")))
-
-coxfit1 <- coxph(formula, data=data, ties="breslow")
-coxfit2 <- coxph(formula, data=data, ties="efron")
-coxfit3 <- coxph(formula, data=data, ties="exact")
-
-coxfits <- list(coxfit1,coxfit2,coxfit3)
-
-purrr::map(coxfits, function(x) tidy(x,exponentiate=TRUE, conf.int=TRUE) %>% slice(1)) %>%
-  bind_rows %>%
-  mutate(term = c("Breslow", "Efron", "Exact")) 
-```
-
 
 ## Selecting patients  
 
 ```{r}
-ggplot(beta_d_after, aes(interval, result, group=`患者ID`)) +
+ggplot(beta_d, aes(interval, result, group=id)) +
   geom_line(aes(color=factor(death90==0)), alpha=0.2) +
-  scale_x_continuous(name='Days', limits=c(0,3000)) +
-  scale_y_continuous(name='Beta-D', limits=c(0,500)) + 
+  geom_smooth(aes(interval, result, group=factor(death90), color=factor(death90==0)), se=FALSE, size=1.5) +
+  scale_x_continuous(name='Days', limits=c(0,90)) +
+  scale_y_continuous(name='Beta-D', limits=c(0,2000)) + 
   scale_color_manual(name='Outcome', values=cols[c(1,2)],
-                     labels = c('Dearh', 'Alive')) +
+                     labels = c('Death', 'Censored')) +
   mytheme()
 ```
 
 ```{r}
-beta_d_after <- within(beta_d_after, {
-  status.lab <- ifelse(death90==1, 'Death', 'Alive')})
+beta_d <- within(beta_d, {
+  status.lab <- ifelse(death90==0, 'Alive', 'Death')})
 
-ggplot(beta_d_after, aes(interval-observation_time, result, group=`患者ID`)) +
+ggplot(beta_d, aes(interval-observation_time, result, group=id)) +
   facet_wrap( ~ status.lab) +
   geom_line(aes(color = status.lab), alpha=0.2) +
-  scale_x_continuous(name='Time from end of follow-up (days)', limits=c(-100,0)) +
+  geom_smooth(aes(interval-observation_time, result,
+                  group=factor(death90), color=factor(death90)), se=FALSE, size=1.5) +
+  scale_x_continuous(name='Time from end of follow-up (days)', limits=c(-90,0)) +
   scale_y_continuous(name='Beta-D', limits=c(0,1000)) + 
-  scale_color_manual(name='Event', values=cols[c(1,2,1,2)]) +
+  scale_color_manual(name='Event', values=cols[c(2,1,2,1)]) +
   mytheme()
 ```
+
+```{r}
+ggplot(ldh, aes(interval, result, group=id)) +
+  geom_line(aes(color=factor(death90==0)), alpha=0.2) +
+  geom_smooth(aes(interval, result, group=factor(death90), color=factor(death90==0)), se=FALSE, size=1.5) +
+  scale_x_continuous(name='Days', limits=c(0,90)) +
+  scale_y_continuous(name='Beta-D', limits=c(0,2000)) + 
+  scale_color_manual(name='Outcome', values=cols[c(1,2)],
+                     labels = c('Death', 'Censored')) +
+  mytheme()
+```
+
+```{r}
+ldh <- within(ldh, {
+  status.lab <- ifelse(death90==0, 'Alive', 'Death')})
+
+ggplot(ldh, aes(interval-observation_time, result, group=id)) +
+  facet_wrap( ~ status.lab) +
+  geom_line(aes(color = status.lab), alpha=0.2) +
+  geom_smooth(aes(interval-observation_time, result,
+                  group=factor(death90), color=factor(death90)), se=FALSE, size=1.5) +
+  scale_x_continuous(name='Time from end of follow-up (days)', limits=c(-90,0)) +
+  scale_y_continuous(name='Beta-D', limits=c(0,1000)) + 
+  scale_color_manual(name='Event', values=cols[c(2,1,2,1)]) +
+  mytheme()
+```
+
+# Statistical analysis
+
+## londitudinal analysis  
+
+```{r}
+ml_beta_d <- lme(log_result_100 ~ interval + age + sex + spo2,
+                 random = ~ interval | id, data = beta_d)
+summary(ml_beta_d)
+```
+
+```{r}
+ml_ldh <- lme(log_result_100 ~ interval + age + sex + spo2,
+                 random = ~ interval | id, data = ldh)
+summary(ml_ldh)
+```
+
+## survival analysis  
+
+```{r}
+beta_d_id <- beta_d %>% distinct(id, .keep_all = TRUE)
+ms_beta_d <- coxph(Surv(observation_time, death90) ~ age + sex + spo2,
+             data=beta_d_id,
+             x=TRUE)
+```
+
+```{r}
+ldh_id <- ldh %>% distinct(id, .keep_all = TRUE)
+ms_ldh <- coxph(Surv(observation_time, death90) ~ age + sex + spo2,
+             data=ldh_id,
+             x=TRUE)
+```
+
+## joint modeling of Beta-D   
+
+```{r}
+mj_beta_d <- jointModel(lmeObject=ml_beta_d,
+                        survObject=ms_beta_d,
+                        timeVar='interval',
+                        method='weibull-PH-aGH')
+summary(mj_beta_d)
+```
+
+```{r}
+res <- summary(mj_beta_d)
+
+res_long <- res[["CoefTable-Long"]] %>% as.data.frame() 
+res_long <- res_long %>% 
+  mutate(est = round(exp(Value), 3),
+         lower = round(exp(Value - 1.96*Std.Err), 3),
+         upper = round(exp(Value + 1.96*Std.Err), 3),
+         p_value = round(`p-value`, 3)) %>% 
+  dplyr::select(est, lower, upper, p_value) %>% 
+  write.csv("memo/res_long.csv")
+  
+res_surv <- res[["CoefTable-Event"]] %>% as.data.frame() 
+res_surv <- res_surv %>% 
+  mutate(est = round(exp(Value), 3),
+         lower = round(exp(Value - 1.96*Std.Err), 3),
+         upper = round(exp(Value + 1.96*Std.Err), 3),
+         p_value = round(`p-value`, 3)) %>%
+  dplyr::select(est, lower, upper, p_value) %>% 
+  write.csv("memo/res_surv_beta_d.csv")
+```
+
+```{r}
+r_l_s <- residuals(mj_beta_d, process='Longitudinal', type='stand-Subject')
+f_l_s <- fitted(mj_beta_d, process='Longitudinal', type='Subject')
+r_l_m <- residuals(mj_beta_d, process='Longitudinal', type='stand-Marginal')
+f_l_m <- fitted(mj_beta_d, process='Longitudinal', type='Marginal')
+r_s <- residuals(mj_beta_d, process='Event', type='Martingale')
+f_s <- fitted(mj_beta_d, process='Longitudinal', type='EventTime')
+```
+
+```{r}
+par(mfrow=c(2,2), mar=c(5,5,1,1))
+plotResid(f_l_s, r_l_s, xlab='Fitted values (subject)', ylab='Residuals (subject)')
+plotQQ(r_l_s)
+plotResid(f_l_m, r_l_m, xlab='Fitted values (marginal)', ylab='Residuals (marginal)')
+plotResid(f_s, r_s, xlab='Fitted values (longitudinal)', ylab='Residuals (Martingale)')
+```
+
+```{r}
+
+```
+
+
+# Joint modeling of LDH  
+
+```{r}
+mj_ldh <- jointModel(lmeObject=ml_ldh,
+                        survObject=ms_ldh,
+                        timeVar='interval',
+                        method='weibull-PH-aGH')
+summary(mj_ldh)
+```
+
+```{r}
+res <- summary(mj_ldh)
+
+res_long <- res[["CoefTable-Long"]] %>% as.data.frame() 
+res_long <- res_long %>% 
+  mutate(est = round(exp(Value), 3),
+         lower = round(exp(Value - 1.96*Std.Err), 3),
+         upper = round(exp(Value + 1.96*Std.Err), 3),
+         p_value = round(`p-value`, 3)) %>% 
+  dplyr::select(est, lower, upper, p_value) %>% 
+  write.csv("memo/res_long.csv")
+  
+res_surv <- res[["CoefTable-Event"]] %>% as.data.frame() 
+res_surv <- res_surv %>% 
+  mutate(est = round(exp(Value), 3),
+         lower = round(exp(Value - 1.96*Std.Err), 3),
+         upper = round(exp(Value + 1.96*Std.Err), 3),
+         p_value = round(`p-value`, 3)) %>%
+  dplyr::select(est, lower, upper, p_value) %>% 
+  write.csv("memo/res_surv_ldh.csv")
+```
+
+```{r}
+r_l_s <- residuals(mj_ldh, process='Longitudinal', type='stand-Subject')
+f_l_s <- fitted(mj_ldh, process='Longitudinal', type='Subject')
+r_l_m <- residuals(mj_ldh, process='Longitudinal', type='stand-Marginal')
+f_l_m <- fitted(mj_ldh, process='Longitudinal', type='Marginal')
+r_s <- residuals(mj_ldh, process='Event', type='Martingale')
+f_s <- fitted(mj_ldh, process='Longitudinal', type='EventTime')
+```
+
+```{r}
+par(mfrow=c(2,2), mar=c(5,5,1,1))
+plotResid(f_l_s, r_l_s, xlab='Fitted values (subject)', ylab='Residuals (subject)')
+plotQQ(r_l_s)
+plotResid(f_l_m, r_l_m, xlab='Fitted values (marginal)', ylab='Residuals (marginal)')
+plotResid(f_s, r_s, xlab='Fitted values (longitudinal)', ylab='Residuals (Martingale)')
+```
+
 
